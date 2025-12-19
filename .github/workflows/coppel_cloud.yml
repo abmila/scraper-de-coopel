@@ -1,0 +1,70 @@
+name: Coppel Scraper (Cloud)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Scrape mode: pdp or plp"
+        required: false
+        default: "pdp"
+      plp_url:
+        description: "PLP URL"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    branches:
+      - main
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'push' || vars.RUN_ON_PUSH == '1' }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
+      MODE: ${{ github.event.inputs.mode || vars.MODE || 'pdp' }}
+      PLP_URL: ${{ github.event.inputs.plp_url || vars.PLP_URL || '' }}
+      EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      EMAIL_SUBJECT: ${{ secrets.EMAIL_SUBJECT || 'Coppel scraping report' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install chromium --with-deps
+
+      - name: Smoke test robots.txt
+        continue-on-error: true
+        run: |
+          curl -I --max-time 20 https://www.coppel.com/robots.txt
+
+      - name: Run scraper
+        run: |
+          python -u -m src.run_scraper
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coppel-outputs
+          path: |
+            outputs/results.csv
+            outputs/results.xlsx
+            outputs/run.log
+            outputs/summary.json
+            outputs/debug
