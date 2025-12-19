@@ -26,6 +26,8 @@ jobs:
       PYTHONIOENCODING: "utf-8"
       MODE: ${{ github.event.inputs.mode || vars.MODE || 'pdp' }}
       PLP_URL: ${{ github.event.inputs.plp_url || vars.PLP_URL || '' }}
+      BROWSER: ${{ vars.BROWSER || 'chromium' }}
+      EXTRA_HEADERS_JSON: ${{ vars.EXTRA_HEADERS_JSON || '' }}
       EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       EMAIL_TO: ${{ secrets.EMAIL_TO }}

@@ -75,6 +75,8 @@ El scraper incluye heurísticas básicas para parecer navegación humana:
 - `DISABLE_AUTOMATION_FLAGS=1`: deshabilita flags de automatización del navegador.
 - `PERSISTENT_CONTEXT=1`: mantiene perfil/cookies en `PERSISTENT_CONTEXT_DIR`.
 - `HEADLESS=0`: abre navegador visible (útil localmente; en GitHub Actions se recomienda `HEADLESS=1`).
+- `BROWSER=chromium|firefox|webkit`: permite probar motores alternativos.
+- `EXTRA_HEADERS_JSON`: headers extra en formato JSON (por ejemplo `{\"Referer\":\"https://www.coppel.com/\"}`).
 
 ## GitHub Actions
 

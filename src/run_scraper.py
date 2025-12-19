@@ -101,6 +101,7 @@ def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir: Path
                 if settings.enable_stealth:
                     page.mouse.move(200, 200)
                     page.wait_for_timeout(500)
+                client.handle_cookie_banner(page)
                 blocked = client.detect_block(page)
                 row["page_type_detected"] = "blocked" if blocked else "pdp"
                 if blocked:
@@ -179,6 +180,7 @@ def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: Path) -
             if settings.enable_stealth:
                 page.mouse.move(150, 180)
                 page.wait_for_timeout(500)
+            client.handle_cookie_banner(page)
             if client.detect_block(page):
                 row["status"] = "BLOCK"
                 row["page_type_detected"] = "blocked"
@@ -258,13 +260,14 @@ def main() -> int:
     setup_logging(log_path)
     LOGGER.info("Starting scraper with mode=%s", settings.mode)
     LOGGER.info(
-        "Config max_urls=%s max_pages=%s headless=%s retries=%s stealth=%s persistent=%s",
+        "Config max_urls=%s max_pages=%s headless=%s retries=%s stealth=%s persistent=%s browser=%s",
         settings.max_urls,
         settings.max_pages,
         settings.headless,
         settings.max_retries_per_url,
         settings.enable_stealth,
         settings.persistent_context,
+        settings.browser,
     )
     rows = []
 

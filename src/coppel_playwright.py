@@ -7,7 +7,7 @@ from typing import Optional
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from src.settings import Settings
-from src.utils import clean_text, hash_key
+from src.utils import clean_text, hash_key, parse_headers_json
 
 
 LOGGER = logging.getLogger("coppel_scraper")
@@ -42,34 +42,34 @@ class PlaywrightClient:
                 ]
             )
 
+        browser_type = self._browser_type()
+        context_kwargs = {
+            "user_agent": self.settings.user_agent,
+            "locale": self.settings.locale,
+            "timezone_id": self.settings.timezone,
+            "viewport": {"width": 1366, "height": 768},
+            "java_script_enabled": True,
+        }
         if self.settings.persistent_context:
-            self.context = self.playwright.chromium.launch_persistent_context(
+            self.context = browser_type.launch_persistent_context(
                 user_data_dir=self.settings.persistent_context_dir,
                 headless=self.settings.headless,
                 slow_mo=self.settings.slow_mo_ms or None,
-                args=launch_args,
-                user_agent=self.settings.user_agent,
-                locale=self.settings.locale,
-                timezone_id=self.settings.timezone,
-                viewport={"width": 1366, "height": 768},
-                java_script_enabled=True,
+                args=launch_args if self.settings.browser == "chromium" else [],
+                **context_kwargs,
             )
         else:
-            self.browser = self.playwright.chromium.launch(
+            self.browser = browser_type.launch(
                 headless=self.settings.headless,
                 slow_mo=self.settings.slow_mo_ms or None,
-                args=launch_args,
+                args=launch_args if self.settings.browser == "chromium" else [],
             )
-            self.context = self.browser.new_context(
-                user_agent=self.settings.user_agent,
-                locale=self.settings.locale,
-                timezone_id=self.settings.timezone,
-                viewport={"width": 1366, "height": 768},
-                java_script_enabled=True,
-            )
+            self.context = self.browser.new_context(**context_kwargs)
         self.context.set_default_timeout(self.settings.wait_selector_ms)
         self.context.set_default_navigation_timeout(self.settings.nav_timeout_ms)
-        self.context.set_extra_http_headers({"Accept-Language": self.settings.locale})
+        headers = {"Accept-Language": self.settings.locale}
+        headers.update(parse_headers_json(self.settings.extra_headers_json))
+        self.context.set_extra_http_headers(headers)
         if self.settings.enable_stealth:
             self.context.add_init_script(self._stealth_script())
         if self.settings.block_images:
@@ -86,8 +86,14 @@ class PlaywrightClient:
         return self.context.new_page()
 
     def open_page(self, page: Page, url: str) -> tuple[str, int | None]:
-        response = page.goto(url, wait_until="domcontentloaded")
-        status = response.status if response else None
+        status = None
+        for wait_until in ("domcontentloaded", "load"):
+            try:
+                response = page.goto(url, wait_until=wait_until)
+                status = response.status if response else None
+                break
+            except Exception as exc:
+                LOGGER.info("Navigation attempt failed (%s): %s", wait_until, exc)
         try:
             page.wait_for_load_state("networkidle", timeout=self.settings.nav_timeout_ms)
         except Exception as exc:
@@ -130,6 +136,7 @@ class PlaywrightClient:
         try:
             page = self.new_page()
             page.goto(url, wait_until="domcontentloaded")
+            self.handle_cookie_banner(page)
             page.wait_for_timeout(1000)
             page.close()
         except Exception as exc:
@@ -142,3 +149,22 @@ window.chrome = { runtime: {} };
 Object.defineProperty(navigator, 'languages', { get: () => ['es-MX', 'es', 'en-US', 'en'] });
 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
 """
+
+    def _browser_type(self):
+        if self.settings.browser == "firefox":
+            return self.playwright.firefox
+        if self.settings.browser == "webkit":
+            return self.playwright.webkit
+        return self.playwright.chromium
+
+    def handle_cookie_banner(self, page: Page) -> None:
+        try:
+            button = page.locator(
+                "xpath=//button[contains(., 'Aceptar') or contains(., 'Acepto') or "
+                "contains(., 'Aceptar todo') or contains(., 'Allow all')]"
+            )
+            if button.count() > 0 and button.first.is_visible():
+                button.first.click()
+                page.wait_for_timeout(500)
+        except Exception:
+            return
