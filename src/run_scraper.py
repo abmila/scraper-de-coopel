@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import random
 import sys
 import time
 from pathlib import Path
@@ -16,6 +14,7 @@ from src.utils import (
     LOGGER,
     clean_text,
     ensure_dir,
+    random_sleep,
     utc_iso,
     write_json,
 )
@@ -84,11 +83,7 @@ def _retry_delay(attempt: int) -> float:
     return min(15.0, base + (0.5 * attempt))
 
 
-def _sleep_range(settings) -> float:
-    return random.uniform(settings.min_sleep_sec, settings.max_sleep_sec)
-
-
-async def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir: Path) -> list[dict]:
+def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir: Path) -> list[dict]:
     rows = []
     start_time = time.time()
     for url in urls:
@@ -97,79 +92,77 @@ async def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir
         for attempt in range(1, settings.max_retries_per_url + 1):
             row["attempts"] = attempt
             LOGGER.info("PDP start url=%s attempt=%d", url, attempt)
-            page = None
             try:
-                page = await client.new_page()
-                final_url, status = await client.open_page(page, url)
+                page = client.new_page()
+                final_url, status = client.open_page(page, url)
                 row["final_url"] = final_url
                 row["product_url"] = final_url
                 row["http_status"] = status or ""
                 if settings.enable_stealth:
-                    await page.mouse.move(200, 200)
-                    await page.wait_for_timeout(500)
-                await client.handle_cookie_banner(page)
-                blocked = await client.detect_block(page)
+                    page.mouse.move(200, 200)
+                    page.wait_for_timeout(500)
+                client.handle_cookie_banner(page)
+                blocked = client.detect_block(page)
                 row["page_type_detected"] = "blocked" if blocked else "pdp"
                 if blocked:
                     row["status"] = "BLOCK"
                     row["error"] = "Blocked by WAF/CDN"
-                    await client.take_debug(page, url, settings.debug_save_html, settings.debug_save_screenshot)
+                    client.take_debug(page, url, settings.debug_save_html, settings.debug_save_screenshot)
                 else:
-                    html = await page.content()
-                    await client.dump_html(page, url)
+                    html = page.content()
+                    client.dump_html(page, url)
                     data = parse_pdp(html, final_url)
                     row.update(data)
                     row["status"] = "OK"
-                await page.close()
+                page.close()
                 break
             except Exception as exc:
                 row["status"] = "FAIL"
                 row["error"] = clean_text(str(exc))[:200]
                 LOGGER.info("PDP error url=%s attempt=%d error=%s", url, attempt, row["error"])
-                if page:
-                    try:
-                        await client.take_debug(page, url, settings.debug_save_html, settings.debug_save_screenshot)
-                    except Exception:
-                        LOGGER.info("Failed to capture debug for %s", url)
+                try:
+                    client.take_debug(page, url, settings.debug_save_html, settings.debug_save_screenshot)
+                except Exception:
+                    LOGGER.info("Failed to capture debug for %s", url)
                 if attempt < settings.max_retries_per_url:
                     delay = _retry_delay(attempt)
                     LOGGER.info("Retrying %s in %.2f sec", url, delay)
-                    await asyncio.sleep(delay)
+                    time.sleep(delay)
                 else:
                     row["status"] = "RETRY_EXHAUSTED"
             finally:
-                if page:
+                if "page" in locals():
                     try:
-                        await page.close()
+                        page.close()
                     except Exception:
                         pass
         row["elapsed_sec"] = round(time.time() - start, 2)
         rows.append(row)
         LOGGER.info("PDP done url=%s status=%s elapsed=%.2f", url, row["status"], row["elapsed_sec"])
-        await asyncio.sleep(_sleep_range(settings))
+        random_sleep(*settings.sleep_range)
         if _should_stop(start_time, settings.max_runtime_sec):
             LOGGER.info("Max runtime reached. Stopping.")
             break
     return rows
 
 
-async def _find_next_button(page) -> object | None:
+def _find_next_button(page) -> object | None:
     candidates = page.locator(
         "xpath=//a[contains(., 'Siguiente') or contains(., 'Next') or "
         "contains(@aria-label, 'Siguiente') or contains(@aria-label, 'Next')]"
     )
-    if await candidates.count() > 0:
+    if candidates.count() > 0:
         return candidates.first
     buttons = page.locator(
         "xpath=//button[contains(., 'Siguiente') or contains(., 'Next') or "
         "contains(@aria-label, 'Siguiente') or contains(@aria-label, 'Next')]"
     )
-    if await buttons.count() > 0:
+    if buttons.count() > 0:
         return buttons.first
     return None
 
 
-async def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: Path) -> list[dict]:
+def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: Path) -> list[dict]:
     rows = []
     seen = set()
     start_time = time.time()
@@ -179,25 +172,24 @@ async def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: P
             break
         row = _base_row(settings, "plp", plp_url)
         LOGGER.info("PLP page=%d url=%s", page_index, plp_url)
-        page = None
         try:
-            page = await client.new_page()
-            final_url, status = await client.open_page(page, plp_url)
+            page = client.new_page()
+            final_url, status = client.open_page(page, plp_url)
             row["final_url"] = final_url
             row["http_status"] = status or ""
             if settings.enable_stealth:
-                await page.mouse.move(150, 180)
-                await page.wait_for_timeout(500)
-            await client.handle_cookie_banner(page)
-            if await client.detect_block(page):
+                page.mouse.move(150, 180)
+                page.wait_for_timeout(500)
+            client.handle_cookie_banner(page)
+            if client.detect_block(page):
                 row["status"] = "BLOCK"
                 row["page_type_detected"] = "blocked"
                 row["error"] = "Blocked by WAF/CDN"
-                await client.take_debug(page, plp_url, settings.debug_save_html, settings.debug_save_screenshot)
+                client.take_debug(page, plp_url, settings.debug_save_html, settings.debug_save_screenshot)
                 rows.append(row)
                 break
-            await client.dump_html(page, f"{plp_url}_page_{page_index}")
-            html = await page.content()
+            client.dump_html(page, f"{plp_url}_page_{page_index}")
+            html = page.content()
             products = parse_plp_products(html, plp_url)
             row["page_type_detected"] = "plp"
             row["status"] = "OK"
@@ -214,49 +206,48 @@ async def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: P
                 product_row["status"] = "OK"
                 product_row["page_type_detected"] = "plp"
                 rows.append(product_row)
-            next_button = await _find_next_button(page)
-            if not next_button or not await next_button.is_visible():
+            next_button = _find_next_button(page)
+            if not next_button or not next_button.is_visible():
                 break
-            if not await next_button.is_enabled():
+            if not next_button.is_enabled():
                 break
-            token = await page.locator("css=a").first.get_attribute("href") or ""
-            await next_button.scroll_into_view_if_needed()
-            await next_button.click()
+            token = page.locator("css=a").first.get_attribute("href") or ""
+            next_button.scroll_into_view_if_needed()
+            next_button.click()
             try:
-                await page.wait_for_timeout(1000)
-                await page.wait_for_function(
+                page.wait_for_timeout(1000)
+                page.wait_for_function(
                     "token => document.querySelector('a')?.getAttribute('href') !== token",
                     token,
                     timeout=settings.nav_timeout_ms,
                 )
             except Exception:
                 LOGGER.info("Page token did not change, trying to click via JS.")
-                await page.evaluate("element => element.click()", next_button)
-                await page.wait_for_timeout(1000)
+                page.evaluate("element => element.click()", next_button)
+                page.wait_for_timeout(1000)
             next_url = page.url
-            await page.close()
-            await asyncio.sleep(_sleep_range(settings))
+            page.close()
+            random_sleep(*settings.sleep_range)
             plp_url = next_url
         except Exception as exc:
             row["status"] = "FAIL"
             row["error"] = clean_text(str(exc))[:200]
             rows.append(row)
-            if page:
-                try:
-                    await client.take_debug(page, plp_url, settings.debug_save_html, settings.debug_save_screenshot)
-                except Exception:
-                    LOGGER.info("Failed to capture debug for PLP")
+            try:
+                client.take_debug(page, plp_url, settings.debug_save_html, settings.debug_save_screenshot)
+            except Exception:
+                LOGGER.info("Failed to capture debug for PLP")
             break
         finally:
-            if page:
+            if "page" in locals():
                 try:
-                    await page.close()
+                    page.close()
                 except Exception:
                     pass
     return rows
 
 
-async def main() -> int:
+def main() -> int:
     settings = get_settings()
     output_dir = Path(settings.output_dir)
     ensure_dir(output_dir)
@@ -270,6 +261,7 @@ async def main() -> int:
     LOGGER.info("Starting scraper with mode=%s", settings.mode)
     LOGGER.info(
         "Config max_urls=%s max_pages=%s headless=%s retries=%s stealth=%s persistent=%s browser=%s",
+        "Config max_urls=%s max_pages=%s headless=%s retries=%s",
         settings.max_urls,
         settings.max_pages,
         settings.headless,
@@ -292,21 +284,23 @@ async def main() -> int:
     if settings.persistent_context:
         ensure_dir(Path(settings.persistent_context_dir))
     client = PlaywrightClient(settings, debug_dir)
-    await client.start()
-    await client.warmup("https://www.coppel.com/")
+    client.start()
+    client.warmup("https://www.coppel.com/")
+    client = PlaywrightClient(settings, debug_dir)
+    client.start()
 
     try:
         if settings.mode == "pdp":
-            rows = await run_pdp(settings, client, urls, debug_dir)
+            rows = run_pdp(settings, client, urls, debug_dir)
         elif settings.mode == "plp":
             if not settings.plp_url:
                 LOGGER.error("PLP_URL is required for PLP mode")
             else:
-                rows = await run_plp(settings, client, settings.plp_url, debug_dir)
+                rows = run_plp(settings, client, settings.plp_url, debug_dir)
         else:
             LOGGER.error("Unknown MODE: %s", settings.mode)
     finally:
-        await client.close()
+        client.close()
 
     results_csv = output_dir / "results.csv"
     results_xlsx = output_dir / "results.xlsx"
@@ -331,4 +325,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())
