@@ -85,6 +85,7 @@ def _retry_delay(attempt: int) -> float:
 
 def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir: Path) -> list[dict]:
     rows = []
+    start_time = time.time()
     for url in urls:
         row = _base_row(settings, "pdp", url)
         start = time.time()
@@ -97,6 +98,10 @@ def run_pdp(settings, client: PlaywrightClient, urls: list[str], debug_dir: Path
                 row["final_url"] = final_url
                 row["product_url"] = final_url
                 row["http_status"] = status or ""
+                if settings.enable_stealth:
+                    page.mouse.move(200, 200)
+                    page.wait_for_timeout(500)
+                client.handle_cookie_banner(page)
                 blocked = client.detect_block(page)
                 row["page_type_detected"] = "blocked" if blocked else "pdp"
                 if blocked:
@@ -172,6 +177,10 @@ def run_plp(settings, client: PlaywrightClient, plp_url: str, debug_dir: Path) -
             final_url, status = client.open_page(page, plp_url)
             row["final_url"] = final_url
             row["http_status"] = status or ""
+            if settings.enable_stealth:
+                page.mouse.move(150, 180)
+                page.wait_for_timeout(500)
+            client.handle_cookie_banner(page)
             if client.detect_block(page):
                 row["status"] = "BLOCK"
                 row["page_type_detected"] = "blocked"
@@ -251,11 +260,15 @@ def main() -> int:
     setup_logging(log_path)
     LOGGER.info("Starting scraper with mode=%s", settings.mode)
     LOGGER.info(
+        "Config max_urls=%s max_pages=%s headless=%s retries=%s stealth=%s persistent=%s browser=%s",
         "Config max_urls=%s max_pages=%s headless=%s retries=%s",
         settings.max_urls,
         settings.max_pages,
         settings.headless,
         settings.max_retries_per_url,
+        settings.enable_stealth,
+        settings.persistent_context,
+        settings.browser,
     )
     rows = []
 
@@ -268,6 +281,11 @@ def main() -> int:
     else:
         LOGGER.info("PLP URL: %s", settings.plp_url)
 
+    if settings.persistent_context:
+        ensure_dir(Path(settings.persistent_context_dir))
+    client = PlaywrightClient(settings, debug_dir)
+    client.start()
+    client.warmup("https://www.coppel.com/")
     client = PlaywrightClient(settings, debug_dir)
     client.start()
 

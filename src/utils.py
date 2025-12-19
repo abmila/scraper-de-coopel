@@ -91,3 +91,16 @@ def chunked(items: Iterable[Any], size: int) -> list[list[Any]]:
     if bucket:
         chunked_items.append(bucket)
     return chunked_items
+
+
+def parse_headers_json(raw: str) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        LOGGER.info("Invalid EXTRA_HEADERS_JSON. Ignoring.")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
