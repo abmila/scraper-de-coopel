@@ -8,6 +8,7 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from src.settings import Settings
 from src.utils import clean_text, hash_key, parse_headers_json
+from src.utils import clean_text, hash_key
 
 
 LOGGER = logging.getLogger("coppel_scraper")
@@ -72,6 +73,20 @@ class PlaywrightClient:
         self.context.set_extra_http_headers(headers)
         if self.settings.enable_stealth:
             self.context.add_init_script(self._stealth_script())
+        self.browser = self.playwright.chromium.launch(
+            headless=self.settings.headless,
+            slow_mo=self.settings.slow_mo_ms or None,
+        )
+        self.context = self.browser.new_context(
+            user_agent=self.settings.user_agent,
+            locale=self.settings.locale,
+            timezone_id=self.settings.timezone,
+            viewport={"width": 1366, "height": 768},
+            java_script_enabled=True,
+        )
+        self.context.set_default_timeout(self.settings.wait_selector_ms)
+        self.context.set_default_navigation_timeout(self.settings.nav_timeout_ms)
+        self.context.set_extra_http_headers({"Accept-Language": self.settings.locale})
         if self.settings.block_images:
             self.context.route(
                 "**/*",
@@ -94,6 +109,8 @@ class PlaywrightClient:
                 break
             except Exception as exc:
                 LOGGER.info("Navigation attempt failed (%s): %s", wait_until, exc)
+        response = page.goto(url, wait_until="domcontentloaded")
+        status = response.status if response else None
         try:
             page.wait_for_load_state("networkidle", timeout=self.settings.nav_timeout_ms)
         except Exception as exc:

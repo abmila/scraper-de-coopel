@@ -261,6 +261,7 @@ def main() -> int:
     LOGGER.info("Starting scraper with mode=%s", settings.mode)
     LOGGER.info(
         "Config max_urls=%s max_pages=%s headless=%s retries=%s stealth=%s persistent=%s browser=%s",
+        "Config max_urls=%s max_pages=%s headless=%s retries=%s",
         settings.max_urls,
         settings.max_pages,
         settings.headless,
@@ -285,6 +286,8 @@ def main() -> int:
     client = PlaywrightClient(settings, debug_dir)
     client.start()
     client.warmup("https://www.coppel.com/")
+    client = PlaywrightClient(settings, debug_dir)
+    client.start()
 
     try:
         if settings.mode == "pdp":
